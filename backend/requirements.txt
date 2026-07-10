@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+cryptography
+python-jose[cryptography]
+bcrypt
+python-multipart
+pydantic
+pydantic-settings
+sentence-transformers
+faiss-cpu
+pypdf
+numpy
+python-dotenv
+pydantic
+email-validator
