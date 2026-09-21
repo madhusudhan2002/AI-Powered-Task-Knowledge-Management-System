@@ -1,3 +1,5 @@
+import streamlit as st
+st.title("AI-Powered Task Knowledge Management System")
 from app.database import Base, engine, SessionLocal
 from app import models
 from app.auth import hash_password
