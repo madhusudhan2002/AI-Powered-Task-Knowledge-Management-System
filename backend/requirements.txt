@@ -4,6 +4,7 @@ sqlalchemy
 pymysql
 cryptography
 python-jose[cryptography]
+passlib[bcrypt]
 bcrypt
 python-multipart
 pydantic
@@ -13,6 +14,5 @@ faiss-cpu
 pypdf
 numpy
 python-dotenv
-pydantic
 email-validator
 unicorn
