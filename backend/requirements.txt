@@ -5,7 +5,8 @@ pymysql
 cryptography
 python-jose[cryptography]
 passlib[bcrypt]
-bcrypt
+passlib
+bcrypt==4.3.0
 python-multipart
 pydantic
 pydantic-settings
