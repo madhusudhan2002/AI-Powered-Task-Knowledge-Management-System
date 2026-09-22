@@ -16,3 +16,12 @@ dist/
 
 # OS
 .DS_Store
+
+# Local development / AI tool files
+.agents/
+.claude/
+vector_store/
+
+# Local utility files
+backend/python
+backend/cleanup_test_documents.py
