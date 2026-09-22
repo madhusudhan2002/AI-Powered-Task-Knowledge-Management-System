@@ -1186,25 +1186,49 @@ def show_dashboard():
 
         total_documents = (
             db.query(Document)
+            .filter(
+                Document.uploaded_by == user.id
+            )
             .count()
         )
 
         total_chunks = (
             db.query(DocumentChunk)
+            .join(
+                Document,
+                Document.id == DocumentChunk.document_id
+            )
+            .filter(
+                Document.uploaded_by == user.id
+            )
             .count()
         )
 
         # ----------------------------------------------
         # Search statistics
         # ----------------------------------------------
-        # Count all recorded search queries.
-        # This avoids assuming a specific user field
-        # on the SearchQuery model.
+        # Count searches belonging to the current user
+        # when the SearchQuery table has a user_id column.
+        # Otherwise fall back to the existing global count.
 
-        total_searches = (
-            db.query(SearchQuery)
-            .count()
-        )
+        search_query_columns = {
+            column.name
+            for column in SearchQuery.__table__.columns
+        }
+
+        if "user_id" in search_query_columns:
+            total_searches = (
+                db.query(SearchQuery)
+                .filter(
+                    SearchQuery.user_id == user.id
+                )
+                .count()
+            )
+        else:
+            total_searches = (
+                db.query(SearchQuery)
+                .count()
+            )
     finally:
 
         db.close()
@@ -1685,6 +1709,9 @@ def show_documents():
 
         documents = (
             db.query(Document)
+            .filter(
+                Document.uploaded_by == user.id
+            )
             .order_by(
                 Document.uploaded_at.desc()
             )
