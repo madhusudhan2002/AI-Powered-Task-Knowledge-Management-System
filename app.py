@@ -1154,55 +1154,78 @@ def show_dashboard():
         # Task statistics
         # ----------------------------------------------
 
-        total_tasks = (
-            db.query(Task)
-            .filter(
-                Task.created_by == user.id
-            )
-            .count()
-        )
+        # Admins see system-wide dashboard statistics.
+        # Normal users see only their own data.
+        if is_admin():
 
-        pending_tasks = (
-            db.query(Task)
-            .filter(
-                Task.created_by == user.id,
-                Task.status == "pending"
+            total_tasks = (
+                db.query(Task)
+                .count()
             )
-            .count()
-        )
 
-        completed_tasks = (
-            db.query(Task)
-            .filter(
-                Task.created_by == user.id,
-                Task.status == "completed"
+            pending_tasks = (
+                db.query(Task)
+                .filter(Task.status == "pending")
+                .count()
             )
-            .count()
-        )
 
-        # ----------------------------------------------
-        # Document statistics
-        # ----------------------------------------------
+            completed_tasks = (
+                db.query(Task)
+                .filter(Task.status == "completed")
+                .count()
+            )
 
-        total_documents = (
-            db.query(Document)
-            .filter(
-                Document.uploaded_by == user.id
+            total_documents = (
+                db.query(Document)
+                .count()
             )
-            .count()
-        )
 
-        total_chunks = (
-            db.query(DocumentChunk)
-            .join(
-                Document,
-                Document.id == DocumentChunk.document_id
+            total_chunks = (
+                db.query(DocumentChunk)
+                .count()
             )
-            .filter(
-                Document.uploaded_by == user.id
+
+        else:
+
+            total_tasks = (
+                db.query(Task)
+                .filter(Task.created_by == user.id)
+                .count()
             )
-            .count()
-        )
+
+            pending_tasks = (
+                db.query(Task)
+                .filter(
+                    Task.created_by == user.id,
+                    Task.status == "pending"
+                )
+                .count()
+            )
+
+            completed_tasks = (
+                db.query(Task)
+                .filter(
+                    Task.created_by == user.id,
+                    Task.status == "completed"
+                )
+                .count()
+            )
+
+            total_documents = (
+                db.query(Document)
+                .filter(Document.uploaded_by == user.id)
+                .count()
+            )
+
+            total_chunks = (
+                db.query(DocumentChunk)
+                .join(
+                    Document,
+                    Document.id == DocumentChunk.document_id
+                )
+                .filter(Document.uploaded_by == user.id)
+                .count()
+            )
 
         # ----------------------------------------------
         # Search statistics
@@ -1216,7 +1239,12 @@ def show_dashboard():
             for column in SearchQuery.__table__.columns
         }
 
-        if "user_id" in search_query_columns:
+        if is_admin():
+            total_searches = (
+                db.query(SearchQuery)
+                .count()
+            )
+        elif "user_id" in search_query_columns:
             total_searches = (
                 db.query(SearchQuery)
                 .filter(
@@ -1225,10 +1253,9 @@ def show_dashboard():
                 .count()
             )
         else:
-            total_searches = (
-                db.query(SearchQuery)
-                .count()
-            )
+            # If searches cannot be associated with a user,
+            # do not expose other users' search count.
+            total_searches = 0
     finally:
 
         db.close()
@@ -3008,49 +3035,134 @@ else:
             # FETCH ANALYTICS DATA
             # ==================================================
 
-            total_tasks = (
-                db.query(Task)
-                .count()
-            )
+            # Admins can see system-wide analytics.
+            # Regular users can see only their own data.
+            user = st.session_state.user
+            admin_view = is_admin()
 
-            pending_tasks = (
-                db.query(Task)
-                .filter(Task.status == "pending")
-                .count()
-            )
+            if admin_view:
 
-            completed_tasks = (
-                db.query(Task)
-                .filter(Task.status == "completed")
-                .count()
-            )
+                total_tasks = (
+                    db.query(Task)
+                    .count()
+                )
 
-            total_documents = (
-                db.query(Document)
-                .count()
-            )
+                pending_tasks = (
+                    db.query(Task)
+                    .filter(Task.status == "pending")
+                    .count()
+                )
 
-            total_chunks = (
-                db.query(DocumentChunk)
-                .count()
-            )
+                completed_tasks = (
+                    db.query(Task)
+                    .filter(Task.status == "completed")
+                    .count()
+                )
 
-            pdf_documents = (
-                db.query(Document)
-                .filter(Document.file_type == "pdf")
-                .count()
-            )
+                total_documents = (
+                    db.query(Document)
+                    .count()
+                )
 
-            txt_documents = (
-                db.query(Document)
-                .filter(Document.file_type == "txt")
-                .count()
-            )
+                total_chunks = (
+                    db.query(DocumentChunk)
+                    .count()
+                )
 
-            total_searches = (
-                db.query(SearchQuery)
-                .count()
-            )
+                pdf_documents = (
+                    db.query(Document)
+                    .filter(Document.file_type == "pdf")
+                    .count()
+                )
+
+                txt_documents = (
+                    db.query(Document)
+                    .filter(Document.file_type == "txt")
+                    .count()
+                )
+
+            else:
+
+                total_tasks = (
+                    db.query(Task)
+                    .filter(Task.created_by == user.id)
+                    .count()
+                )
+
+                pending_tasks = (
+                    db.query(Task)
+                    .filter(
+                        Task.created_by == user.id,
+                        Task.status == "pending"
+                    )
+                    .count()
+                )
+
+                completed_tasks = (
+                    db.query(Task)
+                    .filter(
+                        Task.created_by == user.id,
+                        Task.status == "completed"
+                    )
+                    .count()
+                )
+
+                total_documents = (
+                    db.query(Document)
+                    .filter(Document.uploaded_by == user.id)
+                    .count()
+                )
+
+                total_chunks = (
+                    db.query(DocumentChunk)
+                    .join(
+                        Document,
+                        Document.id == DocumentChunk.document_id
+                    )
+                    .filter(Document.uploaded_by == user.id)
+                    .count()
+                )
+
+                pdf_documents = (
+                    db.query(Document)
+                    .filter(
+                        Document.uploaded_by == user.id,
+                        Document.file_type == "pdf"
+                    )
+                    .count()
+                )
+
+                txt_documents = (
+                    db.query(Document)
+                    .filter(
+                        Document.uploaded_by == user.id,
+                        Document.file_type == "txt"
+                    )
+                    .count()
+                )
+
+            # SearchQuery schemas can differ between database versions.
+            # If user_id exists, isolate searches by the logged-in user.
+            search_query_columns = {
+                column.name
+                for column in SearchQuery.__table__.columns
+            }
+
+            if admin_view:
+                total_searches = (
+                    db.query(SearchQuery)
+                    .count()
+                )
+            elif "user_id" in search_query_columns:
+                total_searches = (
+                    db.query(SearchQuery)
+                    .filter(SearchQuery.user_id == user.id)
+                    .count()
+                )
+            else:
+                # Never expose global search history to a normal user
+                # when the database has no per-user search field.
+                total_searches = 0
 
             # ==================================================
             # SEARCH ACTIVITY OVER TIME
@@ -3061,25 +3173,38 @@ else:
             query_column, time_column = _search_history_columns()
 
             if time_column:
-                search_rows = (
-                    db.query(
-                        func.date(
-                            getattr(SearchQuery, time_column)
-                        ).label("search_date"),
-                        func.count(SearchQuery.id).label("search_count")
-                    )
-                    .group_by(
-                        func.date(
-                            getattr(SearchQuery, time_column)
-                        )
-                    )
-                    .order_by(
-                        func.date(
-                            getattr(SearchQuery, time_column)
-                        )
-                    )
-                    .all()
+                search_activity_query = db.query(
+                    func.date(
+                        getattr(SearchQuery, time_column)
+                    ).label("search_date"),
+                    func.count(SearchQuery.id).label("search_count")
                 )
+
+                if not admin_view and "user_id" in search_query_columns:
+                    search_activity_query = search_activity_query.filter(
+                        SearchQuery.user_id == user.id
+                    )
+
+                elif not admin_view:
+                    search_activity_query = None
+
+                if search_activity_query is not None:
+                    search_rows = (
+                        search_activity_query
+                        .group_by(
+                            func.date(
+                                getattr(SearchQuery, time_column)
+                            )
+                        )
+                        .order_by(
+                            func.date(
+                                getattr(SearchQuery, time_column)
+                            )
+                        )
+                        .all()
+                    )
+                else:
+                    search_rows = []
 
                 search_activity = [
                     {
