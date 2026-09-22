@@ -2,6 +2,8 @@ import sys
 import os
 import hashlib
 import uuid
+import secrets
+import time
 
 import streamlit as st
 import pandas as pd
@@ -232,6 +234,24 @@ if "logged_in" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
+if "auth_page" not in st.session_state:
+    st.session_state.auth_page = "login"
+
+if "reset_step" not in st.session_state:
+    st.session_state.reset_step = 1
+
+if "reset_email" not in st.session_state:
+    st.session_state.reset_email = ""
+
+if "reset_otp_hash" not in st.session_state:
+    st.session_state.reset_otp_hash = ""
+
+if "reset_otp_created_at" not in st.session_state:
+    st.session_state.reset_otp_created_at = 0
+
+if "reset_otp_attempts" not in st.session_state:
+    st.session_state.reset_otp_attempts = 0
+
 
 # ==================================================
 # Login Function
@@ -263,6 +283,448 @@ def login_user(email, password):
 
 
 # ==================================================
+# Sign Up Page
+# ==================================================
+
+def show_signup():
+
+    st.subheader("📝 Create Account")
+    st.caption("Create a new user account to access the system.")
+
+    with st.form("signup_form"):
+
+        name = st.text_input(
+            "Full Name",
+            placeholder="Enter your full name"
+        )
+
+        email = st.text_input(
+            "Email",
+            placeholder="Enter your email address"
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter a password"
+        )
+
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+            placeholder="Re-enter your password"
+        )
+
+        submitted = st.form_submit_button(
+            "Create Account",
+            use_container_width=True
+        )
+
+        if submitted:
+
+            name = name.strip()
+            email = email.strip().lower()
+
+            if not name:
+                st.error("Please enter your full name.")
+
+            elif len(name) < 2:
+                st.error("Name must contain at least 2 characters.")
+
+            elif not email:
+                st.error("Please enter your email address.")
+
+            elif not password:
+                st.error("Please enter a password.")
+
+            elif len(password) < 6:
+                st.error("Password must contain at least 6 characters.")
+
+            elif len(password.encode("utf-8")) > 72:
+                st.error("Password must not exceed 72 bytes.")
+
+            elif password != confirm_password:
+                st.error("Passwords do not match.")
+
+            else:
+
+                db = SessionLocal()
+
+                try:
+
+                    existing_user = (
+                        db.query(User)
+                        .filter(User.email == email)
+                        .first()
+                    )
+
+                    if existing_user:
+
+                        st.error(
+                            "An account with this email already exists."
+                        )
+
+                    else:
+
+                        # Always create public registrations as normal users.
+                        # Admin accounts remain controlled by administrators.
+                        user_role = (
+                            db.query(Role)
+                            .filter(Role.name == "user")
+                            .first()
+                        )
+
+                        if not user_role:
+
+                            st.error(
+                                "The user role was not found in the database."
+                            )
+
+                        else:
+
+                            new_user = User(
+                                name=name,
+                                email=email,
+                                hashed_password=hash_password(password),
+                                role_id=user_role.id
+                            )
+
+                            db.add(new_user)
+                            db.commit()
+
+                            st.success(
+                                "✅ Account created successfully! "
+                                "You can now sign in."
+                            )
+
+                except Exception as e:
+
+                    db.rollback()
+
+                    st.error(
+                        f"❌ Error creating account: {e}"
+                    )
+
+                finally:
+
+                    db.close()
+
+
+# ==================================================
+# Forgot Password Helpers
+# ==================================================
+
+def generate_reset_otp():
+    """Generate a cryptographically secure 6-digit OTP."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def find_user_by_email(email):
+    """Find a user by email address."""
+    db = SessionLocal()
+
+    try:
+        return (
+            db.query(User)
+            .filter(func.lower(User.email) == email.strip().lower())
+            .first()
+        )
+
+    finally:
+        db.close()
+
+
+def reset_user_password(email, new_password):
+    """Update the user's password after OTP verification."""
+    db = SessionLocal()
+
+    try:
+        user = (
+            db.query(User)
+            .filter(func.lower(User.email) == email.strip().lower())
+            .first()
+        )
+
+        if not user:
+            return False
+
+        user.hashed_password = hash_password(new_password)
+        db.commit()
+
+        return True
+
+    except Exception:
+        db.rollback()
+        return False
+
+    finally:
+        db.close()
+
+
+def clear_password_reset_state():
+    """Clear all password-reset session data."""
+    st.session_state.reset_step = 1
+    st.session_state.reset_email = ""
+    st.session_state.reset_otp_hash = ""
+    st.session_state.reset_otp_created_at = 0
+    st.session_state.reset_otp_attempts = 0
+
+
+def show_forgot_password():
+    """Forgot-password flow using a temporary OTP for development/testing."""
+    st.title("🔑 Forgot Password")
+    st.caption("Reset your password using a 6-digit OTP.")
+
+    # --------------------------------------------------
+    # STEP 1: EMAIL
+    # --------------------------------------------------
+
+    if st.session_state.reset_step == 1:
+
+        st.subheader("📧 Enter your registered email")
+
+        with st.form("forgot_password_email_form"):
+
+            email = st.text_input(
+                "Email",
+                placeholder="Enter your registered email"
+            )
+
+            submitted = st.form_submit_button(
+                "Send OTP",
+                use_container_width=True
+            )
+
+            if submitted:
+
+                email = email.strip().lower()
+
+                if not email:
+
+                    st.error("Please enter your email address.")
+
+                else:
+
+                    user = find_user_by_email(email)
+
+                    if not user:
+
+                        st.error(
+                            "No account found with this email address."
+                        )
+
+                    else:
+
+                        otp = generate_reset_otp()
+
+                        st.session_state.reset_email = email
+                        st.session_state.reset_otp_hash = hashlib.sha256(
+                            otp.encode("utf-8")
+                        ).hexdigest()
+                        st.session_state.reset_otp_created_at = time.time()
+                        st.session_state.reset_otp_attempts = 0
+                        st.session_state.reset_step = 2
+
+                        # Temporary development/testing display.
+                        # Replace with email sending after local testing.
+                        st.success("OTP generated successfully.")
+                        st.info(f"🔢 Your OTP is: **{otp}**")
+
+                        st.rerun()
+
+    # --------------------------------------------------
+    # STEP 2: VERIFY OTP
+    # --------------------------------------------------
+
+    elif st.session_state.reset_step == 2:
+
+        st.subheader("🔢 Verify OTP")
+
+        st.info(
+            f"OTP was generated for **{st.session_state.reset_email}**."
+        )
+
+        with st.form("verify_reset_otp_form"):
+
+            entered_otp = st.text_input(
+                "6-digit OTP",
+                max_chars=6,
+                placeholder="Enter OTP"
+            )
+
+            submitted = st.form_submit_button(
+                "Verify OTP",
+                use_container_width=True
+            )
+
+            if submitted:
+
+                entered_otp = entered_otp.strip()
+
+                otp_age = (
+                    time.time()
+                    - st.session_state.reset_otp_created_at
+                )
+
+                if otp_age > 300:
+
+                    st.error(
+                        "OTP has expired. Please request a new OTP."
+                    )
+
+                elif st.session_state.reset_otp_attempts >= 5:
+
+                    st.error(
+                        "Too many incorrect attempts. "
+                        "Please request a new OTP."
+                    )
+
+                elif not entered_otp.isdigit() or len(entered_otp) != 6:
+
+                    st.session_state.reset_otp_attempts += 1
+
+                    st.error(
+                        "Please enter a valid 6-digit OTP."
+                    )
+
+                else:
+
+                    entered_hash = hashlib.sha256(
+                        entered_otp.encode("utf-8")
+                    ).hexdigest()
+
+                    if entered_hash != st.session_state.reset_otp_hash:
+
+                        st.session_state.reset_otp_attempts += 1
+
+                        remaining = max(
+                            0,
+                            5 - st.session_state.reset_otp_attempts
+                        )
+
+                        st.error(
+                            f"Invalid OTP. {remaining} attempt(s) remaining."
+                        )
+
+                    else:
+
+                        st.session_state.reset_step = 3
+                        st.session_state.reset_otp_hash = ""
+                        st.session_state.reset_otp_attempts = 0
+
+                        st.success("✅ OTP verified successfully.")
+
+                        st.rerun()
+
+        if st.button(
+            "🔄 Resend OTP",
+            use_container_width=True
+        ):
+
+            otp = generate_reset_otp()
+
+            st.session_state.reset_otp_hash = hashlib.sha256(
+                otp.encode("utf-8")
+            ).hexdigest()
+            st.session_state.reset_otp_created_at = time.time()
+            st.session_state.reset_otp_attempts = 0
+
+            # Temporary development/testing display.
+            st.success("New OTP generated.")
+            st.info(f"🔢 Your new OTP is: **{otp}**")
+
+        if st.button(
+            "⬅️ Back to Login",
+            use_container_width=True
+        ):
+
+            clear_password_reset_state()
+            st.rerun()
+
+    # --------------------------------------------------
+    # STEP 3: NEW PASSWORD
+    # --------------------------------------------------
+
+    elif st.session_state.reset_step == 3:
+
+        st.subheader("🔐 Create New Password")
+
+        with st.form("reset_password_form"):
+
+            new_password = st.text_input(
+                "New Password",
+                type="password",
+                placeholder="Enter your new password"
+            )
+
+            confirm_password = st.text_input(
+                "Confirm New Password",
+                type="password",
+                placeholder="Re-enter your new password"
+            )
+
+            submitted = st.form_submit_button(
+                "Reset Password",
+                use_container_width=True
+            )
+
+            if submitted:
+
+                if not new_password:
+
+                    st.error("Please enter a new password.")
+
+                elif len(new_password) < 6:
+
+                    st.error(
+                        "Password must contain at least 6 characters."
+                    )
+
+                elif len(new_password.encode("utf-8")) > 72:
+
+                    st.error(
+                        "Password must not exceed 72 bytes."
+                    )
+
+                elif new_password != confirm_password:
+
+                    st.error("Passwords do not match.")
+
+                else:
+
+                    success = reset_user_password(
+                        st.session_state.reset_email,
+                        new_password
+                    )
+
+                    if success:
+
+                        clear_password_reset_state()
+
+                        st.success(
+                            "✅ Password reset successfully! "
+                            "You can now sign in with your new password."
+                        )
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(
+                            "❌ Unable to reset the password. "
+                            "Please try again."
+                        )
+
+        if st.button(
+            "⬅️ Back to Login",
+            use_container_width=True
+        ):
+
+            clear_password_reset_state()
+            st.rerun()
+
+
+# ==================================================
 # Login Page
 # ==================================================
 
@@ -272,57 +734,87 @@ def show_login():
         "🤖 AI-Powered Task & Knowledge Management System"
     )
 
-    st.subheader("🔐 Login")
+    login_tab, signup_tab = st.tabs(
+        ["🔐 Sign In", "📝 Sign Up"]
+    )
 
-    with st.form("login_form"):
+    with login_tab:
 
-        email = st.text_input(
-            "Email",
-            placeholder="Enter your email"
-        )
+        st.subheader("🔐 Sign In")
 
-        password = st.text_input(
-            "Password",
-            type="password",
-            placeholder="Enter your password"
-        )
+        with st.form("login_form"):
 
-        submitted = st.form_submit_button(
-            "Login",
-            use_container_width=True
-        )
+            email = st.text_input(
+                "Email",
+                placeholder="Enter your email",
+                key="login_email"
+            )
 
-        if submitted:
+            password = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter your password",
+                key="login_password"
+            )
 
-            if not email or not password:
+            submitted = st.form_submit_button(
+                "Login",
+                use_container_width=True
+            )
 
-                st.error(
-                    "Please enter email and password."
-                )
+            if submitted:
 
-            else:
+                email = email.strip().lower()
 
-                user = login_user(
-                    email,
-                    password
-                )
+                if not email or not password:
 
-                if user:
-
-                    st.session_state.logged_in = True
-                    st.session_state.user = user
-
-                    st.success(
-                        "Login successful!"
+                    st.error(
+                        "Please enter email and password."
                     )
-
-                    st.rerun()
 
                 else:
 
-                    st.error(
-                        "Invalid email or password."
+                    user = login_user(
+                        email,
+                        password
                     )
+
+                    if user:
+
+                        st.session_state.logged_in = True
+                        st.session_state.user = user
+                        st.session_state.auth_page = "login"
+
+                        st.success(
+                            "Login successful!"
+                        )
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(
+                            "Invalid email or password."
+                        )
+
+        st.write("")
+
+        if st.button(
+            "🔑 Forgot Password?",
+            use_container_width=True
+        ):
+            st.session_state.reset_step = 1
+            st.session_state.reset_email = ""
+            st.session_state.reset_otp_hash = ""
+            st.session_state.reset_otp_created_at = 0
+            st.session_state.reset_otp_attempts = 0
+            st.session_state.auth_page = "forgot_password"
+            st.rerun()
+
+    with signup_tab:
+
+        show_signup()
+
 
 # ==================================================
 # Task Management
@@ -2051,7 +2543,10 @@ def show_user_management():
 
 if not st.session_state.logged_in:
 
-    show_login()
+    if st.session_state.get("auth_page") == "forgot_password":
+        show_forgot_password()
+    else:
+        show_login()
 
 else:
 
@@ -2093,6 +2588,8 @@ else:
         st.session_state.logged_in = False
 
         st.session_state.user = None
+        st.session_state.auth_page = "login"
+        clear_password_reset_state()
 
         st.rerun()
 
