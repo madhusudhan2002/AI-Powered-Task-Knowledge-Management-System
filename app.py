@@ -4,6 +4,8 @@ import hashlib
 import uuid
 import secrets
 import time
+import smtplib
+from email.message import EmailMessage
 
 import streamlit as st
 import pandas as pd
@@ -419,6 +421,101 @@ def generate_reset_otp():
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
+def get_secret_value(name, default=""):
+    """
+    Read a value from Streamlit secrets first, then environment variables.
+    This works both on Streamlit Community Cloud and local development.
+    """
+    try:
+        value = st.secrets.get(name, default)
+    except Exception:
+        value = os.getenv(name, default)
+
+    if value is None:
+        return default
+
+    return str(value).strip()
+
+
+def send_otp_email(recipient_email, otp):
+    """
+    Send the password-reset OTP through Gmail SMTP.
+
+    Required Streamlit secrets / environment variables:
+        SMTP_HOST
+        SMTP_PORT
+        SMTP_USERNAME
+        SMTP_PASSWORD
+        SMTP_FROM_EMAIL
+
+    SMTP_PASSWORD must be a Gmail App Password, not the normal
+    Gmail account password.
+    """
+    smtp_host = get_secret_value("SMTP_HOST", "smtp.gmail.com")
+    smtp_port_text = get_secret_value("SMTP_PORT", "587")
+    smtp_username = get_secret_value("SMTP_USERNAME")
+    smtp_password = get_secret_value("SMTP_PASSWORD")
+    smtp_from_email = get_secret_value(
+        "SMTP_FROM_EMAIL",
+        smtp_username
+    )
+
+    if not smtp_username or not smtp_password:
+        return False, (
+            "SMTP email settings are not configured. "
+            "Add SMTP_USERNAME and SMTP_PASSWORD to "
+            "Streamlit Secrets."
+        )
+
+    try:
+        smtp_port = int(smtp_port_text)
+    except ValueError:
+        return False, "SMTP_PORT must be a valid number."
+
+    message = EmailMessage()
+    message["Subject"] = "Password Reset OTP - AI Task & Knowledge Management System"
+    message["From"] = smtp_from_email
+    message["To"] = recipient_email
+
+    message.set_content(
+        f"""Hello,
+
+We received a request to reset your password for the
+AI-Powered Task & Knowledge Management System.
+
+Your 6-digit OTP is: {otp}
+
+This OTP is valid for 5 minutes.
+
+If you did not request a password reset, you can safely ignore this email.
+
+Regards,
+AI Task & Knowledge Management System
+"""
+    )
+
+    try:
+        with smtplib.SMTP(
+            smtp_host,
+            smtp_port,
+            timeout=20
+        ) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(
+                smtp_username,
+                smtp_password
+            )
+            server.send_message(message)
+
+        return True, None
+
+    except Exception as e:
+        # Do not expose SMTP credentials or the OTP in the UI.
+        return False, str(e)
+
+
 def find_user_by_email(email):
     """Find a user by email address."""
     db = SessionLocal()
@@ -471,9 +568,9 @@ def clear_password_reset_state():
 
 
 def show_forgot_password():
-    """Forgot-password flow using a temporary OTP for development/testing."""
+    """Forgot-password flow using OTP sent by email."""
     st.title("🔑 Forgot Password")
-    st.caption("Reset your password using a 6-digit OTP.")
+    st.caption("Reset your password using a 6-digit OTP sent to your email.")
 
     # --------------------------------------------------
     # STEP 1: EMAIL
@@ -517,20 +614,51 @@ def show_forgot_password():
 
                         otp = generate_reset_otp()
 
-                        st.session_state.reset_email = email
-                        st.session_state.reset_otp_hash = hashlib.sha256(
-                            otp.encode("utf-8")
-                        ).hexdigest()
-                        st.session_state.reset_otp_created_at = time.time()
-                        st.session_state.reset_otp_attempts = 0
-                        st.session_state.reset_step = 2
+                        # Send the OTP FIRST.
+                        # We only store/activate it after the email
+                        # has been sent successfully.
+                        email_sent, email_error = send_otp_email(
+                            email,
+                            otp
+                        )
 
-                        # Temporary development/testing display.
-                        # Replace with email sending after local testing.
-                        st.success("OTP generated successfully.")
-                        st.info(f"🔢 Your OTP is: **{otp}**")
+                        if email_sent:
 
-                        st.rerun()
+                            st.session_state.reset_email = email
+
+                            st.session_state.reset_otp_hash = hashlib.sha256(
+                                otp.encode("utf-8")
+                            ).hexdigest()
+
+                            st.session_state.reset_otp_created_at = time.time()
+                            st.session_state.reset_otp_attempts = 0
+                            st.session_state.reset_step = 2
+
+                            # IMPORTANT:
+                            # Never display the OTP on the Streamlit page.
+                            st.success(
+                                "✅ OTP sent successfully to your registered email."
+                            )
+
+                            st.rerun()
+
+                        else:
+
+                            st.error(
+                                "❌ Could not send the OTP email."
+                            )
+
+                            st.caption(
+                                "Please verify the SMTP settings in "
+                                "Streamlit Secrets."
+                            )
+
+                            # Show a useful error without revealing
+                            # credentials or the OTP.
+                            if email_error:
+                                st.warning(
+                                    f"Email service error: {email_error}"
+                                )
 
     # --------------------------------------------------
     # STEP 2: VERIFY OTP
@@ -541,7 +669,8 @@ def show_forgot_password():
         st.subheader("🔢 Verify OTP")
 
         st.info(
-            f"OTP was generated for **{st.session_state.reset_email}**."
+            f"OTP was sent to **{st.session_state.reset_email}**. "
+            "Please check your email."
         )
 
         with st.form("verify_reset_otp_form"):
@@ -612,7 +741,9 @@ def show_forgot_password():
                         st.session_state.reset_otp_hash = ""
                         st.session_state.reset_otp_attempts = 0
 
-                        st.success("✅ OTP verified successfully.")
+                        st.success(
+                            "✅ OTP verified successfully."
+                        )
 
                         st.rerun()
 
@@ -623,15 +754,36 @@ def show_forgot_password():
 
             otp = generate_reset_otp()
 
-            st.session_state.reset_otp_hash = hashlib.sha256(
-                otp.encode("utf-8")
-            ).hexdigest()
-            st.session_state.reset_otp_created_at = time.time()
-            st.session_state.reset_otp_attempts = 0
+            email_sent, email_error = send_otp_email(
+                st.session_state.reset_email,
+                otp
+            )
 
-            # Temporary development/testing display.
-            st.success("New OTP generated.")
-            st.info(f"🔢 Your new OTP is: **{otp}**")
+            if email_sent:
+
+                st.session_state.reset_otp_hash = hashlib.sha256(
+                    otp.encode("utf-8")
+                ).hexdigest()
+
+                st.session_state.reset_otp_created_at = time.time()
+                st.session_state.reset_otp_attempts = 0
+
+                # IMPORTANT:
+                # Never display the OTP on the Streamlit page.
+                st.success(
+                    "✅ A new OTP has been sent to your email."
+                )
+
+            else:
+
+                st.error(
+                    "❌ Could not send the new OTP email."
+                )
+
+                if email_error:
+                    st.warning(
+                        f"Email service error: {email_error}"
+                    )
 
         if st.button(
             "⬅️ Back to Login",
