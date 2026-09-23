@@ -441,20 +441,34 @@ def send_otp_email(recipient_email, otp):
     """
     Send the password-reset OTP through Gmail SMTP.
 
-    Required Streamlit secrets / environment variables:
-        SMTP_HOST
-        SMTP_PORT
-        SMTP_USERNAME
-        SMTP_PASSWORD
-        SMTP_FROM_EMAIL
-
-    SMTP_PASSWORD must be a Gmail App Password, not the normal
-    Gmail account password.
+    This version:
+    - Sends to the email address entered by the user.
+    - Checks Gmail's refused-recipient response.
+    - Does not display the OTP in Streamlit.
+    - Does not store the OTP until the email is accepted.
+    - Provides a useful delivery error without exposing SMTP credentials.
     """
-    smtp_host = get_secret_value("SMTP_HOST", "smtp.gmail.com")
-    smtp_port_text = get_secret_value("SMTP_PORT", "587")
-    smtp_username = get_secret_value("SMTP_USERNAME")
-    smtp_password = get_secret_value("SMTP_PASSWORD")
+
+    recipient_email = recipient_email.strip().lower()
+
+    smtp_host = get_secret_value(
+        "SMTP_HOST",
+        "smtp.gmail.com"
+    )
+
+    smtp_port_text = get_secret_value(
+        "SMTP_PORT",
+        "587"
+    )
+
+    smtp_username = get_secret_value(
+        "SMTP_USERNAME"
+    )
+
+    smtp_password = get_secret_value(
+        "SMTP_PASSWORD"
+    )
+
     smtp_from_email = get_secret_value(
         "SMTP_FROM_EMAIL",
         smtp_username
@@ -463,9 +477,12 @@ def send_otp_email(recipient_email, otp):
     if not smtp_username or not smtp_password:
         return False, (
             "SMTP email settings are not configured. "
-            "Add SMTP_USERNAME and SMTP_PASSWORD to "
-            "Streamlit Secrets."
+            "Add SMTP_USERNAME and SMTP_PASSWORD "
+            "to Streamlit Secrets."
         )
+
+    if not recipient_email:
+        return False, "Recipient email address is empty."
 
     try:
         smtp_port = int(smtp_port_text)
@@ -473,7 +490,12 @@ def send_otp_email(recipient_email, otp):
         return False, "SMTP_PORT must be a valid number."
 
     message = EmailMessage()
-    message["Subject"] = "Password Reset OTP - AI Task & Knowledge Management System"
+
+    message["Subject"] = (
+        "Password Reset OTP - "
+        "AI Task & Knowledge Management System"
+    )
+
     message["From"] = smtp_from_email
     message["To"] = recipient_email
 
@@ -487,7 +509,8 @@ Your 6-digit OTP is: {otp}
 
 This OTP is valid for 5 minutes.
 
-If you did not request a password reset, you can safely ignore this email.
+If you did not request a password reset,
+you can safely ignore this email.
 
 Regards,
 AI Task & Knowledge Management System
@@ -500,21 +523,79 @@ AI Task & Knowledge Management System
             smtp_port,
             timeout=20
         ) as server:
+
             server.ehlo()
+
             server.starttls()
+
             server.ehlo()
+
             server.login(
                 smtp_username,
                 smtp_password
             )
-            server.send_message(message)
+
+            # sendmail() returns a dictionary containing recipients
+            # that were refused by the SMTP server.
+            refused = server.sendmail(
+                smtp_from_email,
+                [recipient_email],
+                message.as_string()
+            )
+
+            if refused:
+                refused_details = refused.get(
+                    recipient_email,
+                    "Recipient was refused by the SMTP server."
+                )
+
+                return False, (
+                    "The email server refused the recipient "
+                    f"({refused_details})."
+                )
 
         return True, None
 
-    except Exception as e:
-        # Do not expose SMTP credentials or the OTP in the UI.
-        return False, str(e)
+    except smtplib.SMTPRecipientsRefused:
+        return False, (
+            "The recipient email address was rejected "
+            "by the SMTP server."
+        )
 
+    except smtplib.SMTPAuthenticationError:
+        return False, (
+            "SMTP authentication failed. "
+            "Check the Gmail App Password in Streamlit Secrets."
+        )
+
+    except smtplib.SMTPConnectError:
+        return False, (
+            "Could not connect to the Gmail SMTP server."
+        )
+
+    except smtplib.SMTPServerDisconnected:
+        return False, (
+            "The Gmail SMTP server disconnected the connection. "
+            "Please try again."
+        )
+
+    except smtplib.SMTPDataError:
+        return False, (
+            "The SMTP server rejected the email message. "
+            "Please try again."
+        )
+
+    except smtplib.SMTPException:
+        return False, (
+            "A Gmail SMTP error occurred while sending the email."
+        )
+
+    except Exception:
+        # Never expose SMTP credentials or the OTP.
+        return False, (
+            "The email could not be sent. "
+            "Please verify the SMTP settings and try again."
+        )
 
 def find_user_by_email(email):
     """Find a user by email address."""
